@@ -1,0 +1,21 @@
+cabal-version:      3.0
+name:               SweepTheBackend
+version:            0.1.0.0
+synopsis:           Backend server for sweeptheleg
+homepage:           http://sweeptheleg.club
+license:            NONE
+author:             Johan Yngman
+maintainer:         johan.yngman@gmail.com
+extra-source-files: CHANGELOG.md
+
+executable SweepTheBackend
+    main-is:          Main.hs
+
+    -- Modules included in this executable, other than Main.
+    -- other-modules:
+
+    -- LANGUAGE extensions used by modules in this package.
+    -- other-extensions:
+    build-depends:    base ^>=4.18.1.0
+    hs-source-dirs:   app
+    default-language: GHC2021
