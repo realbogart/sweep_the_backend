@@ -48,27 +48,25 @@ testServer = return testSchedules
 sweepTheBackend :: Application
 sweepTheBackend = serve scheduleAPI testServer
 
-readConfig :: FilePath -> IO (Maybe Config)
+readConfig :: FilePath -> IO (Either String Config)
 readConfig fileName = do
   result <- try (BS.readFile fileName) :: IO (Either IOException BS.ByteString)
-  case result of
-    Left ex -> do 
-      putStrLn $ "Unable to read config file " ++ show ex 
-      return Nothing
-    Right content -> do 
-      let parseResult = decode content
-      case parseResult of
-        Nothing -> do 
-          putStrLn $ "Could not parse JSON from " ++ show fileName
-          return Nothing
-        Just config -> return $ Just config
+  return $ case result of
+            Left ex -> do 
+              Left $ "Unable to read config file " ++ show ex 
+            Right content -> do 
+              let parseResult = eitherDecode content
+              case parseResult of
+                Left err -> do 
+                  Left $ "Could not parse JSON from " ++ show fileName ++ ": " ++ show err
+                Right config -> Right config
 
 main :: IO ()
 main = do 
   result <- readConfig "config.json"
   case result of
-    Nothing -> putStrLn "Invalid configuration"
-    Just config -> print config
-  run 1337 sweepTheBackend
-  return ()
+    Left err -> putStrLn ("Invalid configuration: " ++ err)
+    Right config -> do  print config
+                        run (httpserver_port config) sweepTheBackend
+                        return ()
 
