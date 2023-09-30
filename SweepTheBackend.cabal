@@ -13,6 +13,7 @@ executable SweepTheBackend
     -- other-extensions: DataKinds,
     --                   TypeOperators,
     --                   OverloadedStrings
+    other-modules:    SweepConfig
     build-depends:    base ^>=4.18.1.0,
                       servant ==0.20,
                       servant-server ==0.20,
