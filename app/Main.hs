@@ -10,10 +10,11 @@ import Servant
 import GHC.Generics
 import Network.Wai.Handler.Warp
 import Data.Aeson
+import Control.Concurrent.MVar
 
-type SweepTheLegAPI = "getSchedule" :> Get '[JSON] [Schedule]
+type SweepTheLegAPI = "getSchedule" :> Get '[JSON] Schedule
 
-data Schedule = Schedule
+data Slot = Schedule
   { name :: String 
   , time :: String
   , dj :: String
@@ -21,15 +22,18 @@ data Schedule = Schedule
   , playlistLink :: String
   } deriving (Show, Eq, Generic)
 
-instance ToJSON Schedule
+type Schedule = [Slot]
 
-testSchedules = [Schedule "hello" "now" "johan" "https://bild" "https://spotify-link"]
+instance ToJSON Slot
+instance FromJSON Slot
+
+testSchedule = [Schedule "hello" "now" "johan" "https://bild" "https://spotify-link"]
 
 sweepTheLegAPI :: Proxy SweepTheLegAPI
 sweepTheLegAPI = Proxy
 
 testServer :: Server SweepTheLegAPI
-testServer = return testSchedules
+testServer = return testSchedule
 
 sweepTheBackend :: Application
 sweepTheBackend = serve sweepTheLegAPI testServer
@@ -42,7 +46,7 @@ main = do
     Left err -> putStrLn ("Invalid configuration: " ++ err)
     Right config -> do  let port = httpserver_port config
                         putStrLn $ "Successfully loaded '" ++ configFile ++ "'."
-                        putStrLn $ "Starting server on port " ++ show port ++ "."
+                        putStrLn $ "Starting HTTP server on port " ++ show port ++ "."
                         run port sweepTheBackend
                         return ()
 
