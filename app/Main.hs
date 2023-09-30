@@ -13,8 +13,6 @@ import Data.Aeson
 import Control.Concurrent.MVar
 import Control.Monad.IO.Class (MonadIO(liftIO))
 
-type SweepTheAPI = "getSchedule" :> Get '[JSON] Schedule
-
 data Slot = Schedule
   { name :: String 
   , time :: String
@@ -27,6 +25,9 @@ type Schedule = [Slot]
 
 instance ToJSON Slot
 instance FromJSON Slot
+
+type SweepTheAPI =  "getSchedule" :> Get '[JSON] Schedule :<|>
+                    "updateSchedule" :> ReqBody '[JSON] Schedule :> Post '[JSON] NoContent
 
 data SweepState = SweepState
   { schedule :: Schedule
@@ -44,8 +45,13 @@ getSchedule state = do
   sweepState <- liftIO (readMVar state)
   return $ schedule sweepState
 
+setSchedule :: MVar SweepState -> Schedule -> Handler NoContent
+setSchedule state newSchedule = do
+  liftIO $ modifyMVar_ state (\oldState -> return oldState {schedule = newSchedule}) 
+  return NoContent
+  
 sweepTheServer :: MVar SweepState -> Server SweepTheAPI
-sweepTheServer = getSchedule
+sweepTheServer state = getSchedule state :<|> setSchedule state
 
 sweepTheApplication :: MVar SweepState -> Application
 sweepTheApplication state = serve sweepTheAPI (sweepTheServer state)
