@@ -11,6 +11,7 @@ import GHC.Generics
 import Network.Wai.Handler.Warp
 import Data.Aeson
 import Control.Concurrent.MVar
+import Control.Monad.IO.Class (MonadIO(liftIO))
 
 type SweepTheAPI = "getSchedule" :> Get '[JSON] Schedule
 
@@ -38,11 +39,16 @@ testSchedule = [Schedule "hello" "now" "johan" "https://bild" "https://spotify-l
 sweepTheAPI :: Proxy SweepTheAPI
 sweepTheAPI = Proxy
 
-sweepTheServer :: Server SweepTheAPI
-sweepTheServer = return testSchedule
+getSchedule :: MVar SweepState -> Handler Schedule
+getSchedule state = do 
+  sweepState <- liftIO (readMVar state)
+  return $ schedule sweepState
 
-sweepTheApplication :: Application
-sweepTheApplication = serve sweepTheAPI sweepTheServer
+sweepTheServer :: MVar SweepState -> Server SweepTheAPI
+sweepTheServer = getSchedule
+
+sweepTheApplication :: MVar SweepState -> Application
+sweepTheApplication state = serve sweepTheAPI (sweepTheServer state)
 
 main :: IO ()
 main = do 
@@ -53,6 +59,7 @@ main = do
     Right config -> do  let port = httpserver_port config
                         putStrLn $ "Successfully loaded '" ++ configFile ++ "'."
                         putStrLn $ "Starting HTTP server on port " ++ show port ++ "."
-                        run port sweepTheApplication
+                        sweepState <- newMVar $ SweepState{schedule = testSchedule, currentSlot = - 1}
+                        run port (sweepTheApplication sweepState)
                         return ()
 
