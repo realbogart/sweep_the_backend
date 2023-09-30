@@ -59,9 +59,15 @@ staticPath = "static"
 isHtmlRequest :: Request -> Bool
 isHtmlRequest req = ".html" `L.isSuffixOf` BS.unpack (rawPathInfo req)
 
+type Replacement = (TL.Text, TL.Text)
+
 replacePlaceholders :: SweepConfig -> TL.Text -> TL.Text
-replacePlaceholders config = 
-  TL.replace "<websocket_server>" (TL.fromStrict $ websocket_server_ip config)
+replacePlaceholders config content = 
+  L.foldl' replace content replacements
+    where replacements :: [Replacement]
+          replacements =  [ ("<websocket_server", TL.fromStrict $ websocket_server_ip config)
+                          , ("<stream_ip>", TL.fromStrict $ stream_ip config)]
+          replace haystack (needle,replacement) = TL.replace needle replacement haystack
 
 serveModifiedHtml :: SweepConfig -> FilePath -> Application
 serveModifiedHtml config filePath req respond = do
