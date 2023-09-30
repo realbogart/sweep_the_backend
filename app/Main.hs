@@ -12,7 +12,7 @@ import Network.Wai.Handler.Warp
 import Data.Aeson
 import Control.Concurrent.MVar
 
-type SweepTheLegAPI = "getSchedule" :> Get '[JSON] Schedule
+type SweepTheAPI = "getSchedule" :> Get '[JSON] Schedule
 
 data Slot = Schedule
   { name :: String 
@@ -27,16 +27,22 @@ type Schedule = [Slot]
 instance ToJSON Slot
 instance FromJSON Slot
 
+data SweepState = SweepState
+  { schedule :: Schedule
+  , currentSlot :: Int
+  } deriving (Show)
+
+testSchedule :: Schedule
 testSchedule = [Schedule "hello" "now" "johan" "https://bild" "https://spotify-link"]
 
-sweepTheLegAPI :: Proxy SweepTheLegAPI
-sweepTheLegAPI = Proxy
+sweepTheAPI :: Proxy SweepTheAPI
+sweepTheAPI = Proxy
 
-testServer :: Server SweepTheLegAPI
-testServer = return testSchedule
+sweepTheServer :: Server SweepTheAPI
+sweepTheServer = return testSchedule
 
-sweepTheBackend :: Application
-sweepTheBackend = serve sweepTheLegAPI testServer
+sweepTheApplication :: Application
+sweepTheApplication = serve sweepTheAPI sweepTheServer
 
 main :: IO ()
 main = do 
@@ -47,6 +53,6 @@ main = do
     Right config -> do  let port = httpserver_port config
                         putStrLn $ "Successfully loaded '" ++ configFile ++ "'."
                         putStrLn $ "Starting HTTP server on port " ++ show port ++ "."
-                        run port sweepTheBackend
+                        run port sweepTheApplication
                         return ()
 
