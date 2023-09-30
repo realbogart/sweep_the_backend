@@ -6,15 +6,12 @@ module Main where
 
 import SweepConfig
 
-import Data.Text
 import Servant
-import Servant.API
 import GHC.Generics
 import Network.Wai.Handler.Warp
 import Data.Aeson
-import Data.ByteString.Lazy.Char8 qualified as BS
 
-type ScheduleAPI = "getSchedule" :> Get '[JSON] [Schedule]
+type SweepTheLegAPI = "getSchedule" :> Get '[JSON] [Schedule]
 
 data Schedule = Schedule
   { name :: String 
@@ -28,21 +25,24 @@ instance ToJSON Schedule
 
 testSchedules = [Schedule "hello" "now" "johan" "https://bild" "https://spotify-link"]
 
-scheduleAPI :: Proxy ScheduleAPI
-scheduleAPI = Proxy
+sweepTheLegAPI :: Proxy SweepTheLegAPI
+sweepTheLegAPI = Proxy
 
-testServer :: Server ScheduleAPI
+testServer :: Server SweepTheLegAPI
 testServer = return testSchedules
 
 sweepTheBackend :: Application
-sweepTheBackend = serve scheduleAPI testServer
+sweepTheBackend = serve sweepTheLegAPI testServer
 
 main :: IO ()
 main = do 
-  result <- readConfig "config.json"
+  let configFile = "config.json"
+  result <- readConfig configFile
   case result of
     Left err -> putStrLn ("Invalid configuration: " ++ err)
-    Right config -> do  print config
-                        run (httpserver_port config) sweepTheBackend
+    Right config -> do  let port = httpserver_port config
+                        putStrLn $ "Successfully loaded '" ++ configFile ++ "'."
+                        putStrLn $ "Starting server on port " ++ show port ++ "."
+                        run port sweepTheBackend
                         return ()
 
