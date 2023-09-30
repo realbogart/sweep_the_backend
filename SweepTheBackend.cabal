@@ -21,6 +21,8 @@ executable SweepTheBackend
                       warp ==3.3.29,
                       aeson ==2.1.2.1,
                       bytestring ==0.11.5.2,
-                      wai-extra ==3.1.13.0
+                      wai ==3.2.3,
+                      http-types ==0.12.3,
+                      filepath ==1.4.100.4
     hs-source-dirs:   app
     default-language: GHC2021

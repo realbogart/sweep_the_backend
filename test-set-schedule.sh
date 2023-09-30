@@ -1,1 +1,1 @@
-curl -X POST -H "Content-Type: application/json" -d '[{"dj":"updated dj","imageLink":"https://en-annan-bild","name":"heerlo","playlistLink":"https://new-spotify-link","time":"tomorrow"}]' http://localhost:1337/updateSchedule
+curl -X POST -H "Content-Type: application/json" -d '[{"dj":"updated dj","imageLink":"https://en-annan-bild","name":"heerlo","playlistLink":"https://new-spotify-link","time":"tomorrow"}]' http://localhost:1337/setSchedule

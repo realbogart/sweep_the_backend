@@ -4,14 +4,15 @@ import GHC.Generics
 import Data.Aeson
 import Data.ByteString.Lazy.Char8 qualified as BS
 import Control.Exception
+import Data.Text qualified as T
 
 data SweepConfig = Config
-  { websocket_server_ip :: String
+  { websocket_server_ip :: T.Text
   , httpserver_port :: Int
   , websocket_port :: Int
-  , stream_ip :: String
-  , password :: String
-  , default_background :: String
+  , stream_ip :: T.Text
+  , password :: T.Text
+  , default_background :: T.Text
   } deriving (Show, Generic)
 
 instance ToJSON SweepConfig
