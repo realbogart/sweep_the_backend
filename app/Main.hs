@@ -27,7 +27,8 @@ instance ToJSON Slot
 instance FromJSON Slot
 
 type SweepTheAPI =  "getSchedule" :> Get '[JSON] Schedule :<|>
-                    "updateSchedule" :> ReqBody '[JSON] Schedule :> Post '[JSON] NoContent
+                    "updateSchedule" :> ReqBody '[JSON] Schedule :> Post '[JSON] NoContent :<|>
+                    Raw
 
 data SweepState = SweepState
   { schedule :: Schedule
@@ -51,7 +52,7 @@ setSchedule state newSchedule = do
   return NoContent
   
 sweepTheServer :: MVar SweepState -> Server SweepTheAPI
-sweepTheServer state = getSchedule state :<|> setSchedule state
+sweepTheServer state = getSchedule state :<|> setSchedule state :<|> serveDirectoryFileServer "static"
 
 sweepTheApplication :: MVar SweepState -> Application
 sweepTheApplication state = serve sweepTheAPI (sweepTheServer state)
