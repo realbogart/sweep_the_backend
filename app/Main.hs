@@ -53,6 +53,9 @@ testSchedule = [Schedule "hello" "now" "johan" "https://bild" "https://spotify-l
 sweepTheAPI :: Proxy SweepTheAPI
 sweepTheAPI = Proxy
 
+staticPath :: String
+staticPath = "static"
+
 isHtmlRequest :: Request -> Bool
 isHtmlRequest req = ".html" `L.isSuffixOf` BS.unpack (rawPathInfo req)
 
@@ -62,15 +65,16 @@ replacePlaceholders config =
 
 serveModifiedHtml :: SweepConfig -> FilePath -> Application
 serveModifiedHtml config filePath req respond = do
-    content <- TLIO.readFile filePath
-    let modifiedContent = replacePlaceholders config content
-    respond $ responseLBS status200 [("Content-Type", "text/html")] (TLE.encodeUtf8 modifiedContent)
+  content <- TLIO.readFile (staticPath ++ "/" ++ filePath)
+  let modifiedContent = replacePlaceholders config content
+  respond $ responseLBS status200 [("Content-Type", "text/html")] (TLE.encodeUtf8 modifiedContent)
 
 htmlMiddleware :: SweepConfig -> Middleware
-htmlMiddleware config app req respond =
-    if isHtmlRequest req
-    then serveModifiedHtml config (joinPath $ map T.unpack $ pathInfo req) req respond
-    else app req respond
+htmlMiddleware config app req respond
+  | null path = serveModifiedHtml config "index.html" req respond
+  | isHtmlRequest req = serveModifiedHtml config (joinPath $ map T.unpack path) req respond
+  | otherwise = app req respond
+    where path = pathInfo req
 
 getSchedule :: MVar SweepState -> Handler Schedule
 getSchedule state = do 
@@ -83,10 +87,10 @@ setSchedule state newSchedule = do
   return NoContent
   
 sweepTheServer :: MVar SweepState -> Server SweepTheAPI
-sweepTheServer state = getSchedule state :<|> setSchedule state :<|> serveDirectoryFileServer "static"
+sweepTheServer state = getSchedule state :<|> setSchedule state :<|> serveDirectoryFileServer staticPath
 
-sweepTheApplication :: MVar SweepState -> Application
-sweepTheApplication state = serve sweepTheAPI (sweepTheServer state)
+sweepTheApplication :: MVar SweepState -> SweepConfig -> Application
+sweepTheApplication state config = htmlMiddleware config $ serve sweepTheAPI (sweepTheServer state)
 
 main :: IO ()
 main = do 
@@ -98,6 +102,6 @@ main = do
                         putStrLn $ "Successfully loaded '" ++ configFile ++ "'."
                         putStrLn $ "Starting HTTP server on port " ++ show port ++ "."
                         sweepState <- newMVar $ SweepState{schedule = testSchedule, currentSlot = - 1}
-                        run port (sweepTheApplication sweepState)
+                        run port (sweepTheApplication sweepState config)
                         return ()
 
