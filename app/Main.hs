@@ -51,8 +51,8 @@ broadcast message clients = do
   TIO.putStrLn message
   forM_ clients $ \(_, conn) -> WS.sendTextData conn message
 
-talk :: Client -> MVar ServerState -> IO ()
-talk (user, conn) state = forever $ do
+sendFireworks :: Client -> MVar ServerState -> IO ()
+sendFireworks (user, conn) state = forever $ do
   msg <- WS.receiveData conn
   readMVar state >>= broadcast msg
 
@@ -60,27 +60,15 @@ wsApplication :: MVar ServerState -> WS.ServerApp
 wsApplication state pending = do
   conn <- WS.acceptRequest pending
   WS.withPingThread conn 30 (return ()) $ do
+    let client = ("none", conn)
+        disconnect = modifyMVar_ state $ \s -> return $ removeClient client s
+
     msg :: T.Text <- WS.receiveData conn
     clients <- readMVar state
-    case msg of
-      -- _ | any ($ fst client)  [T.null, T.any isSpace] ->
-      --       WS.sendTextData conn ("Name cannot contain whitespace, and cannot be empty" :: T.Text)
-        -- | clientExists client clients ->
-        --     WS.sendTextData conn ("Client already exists" :: T.Text)
-      _ | otherwise -> 
-            flip CE.finally disconnect $ do
-              modifyMVar_ state $ \s -> return $ addClient client s
-                -- let s' = addClient client s
-                -- WS.sendTextData conn $ "Welcome! Users: " <> T.intercalate ", " (map fst s)
-                -- broadcast (fst client <> " joined") s'
-                -- return s'
-              talk client state
-        where client = ("none", conn)
-              disconnect = do
-                modifyMVar_ state $ \s -> return $ removeClient client s
-                --   let s' = removeClient client s in return (s', s')
-                -- return ()
-                -- broadcast (fst client <> " disconnected") s
+        
+    flip CE.finally disconnect $ do
+      modifyMVar_ state $ \s -> return $ addClient client s
+      sendFireworks client state
 
 data Slot = Schedule
   { name :: T.Text 
