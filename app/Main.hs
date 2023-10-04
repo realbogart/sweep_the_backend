@@ -51,11 +51,16 @@ broadcast message clients = do
   TIO.putStrLn message
   forM_ clients $ \(_, conn) -> WS.sendTextData conn message
 
-sendFireworks :: Client -> MVar ServerState -> IO ()
-sendFireworks (user, conn) state = forever $ do
-  msg <- WS.receiveData conn
-  readMVar state >>= broadcast msg
+isFireworks :: T.Text -> Bool
+isFireworks = T.isPrefixOf (T.pack "{\"type\":\"spawnFireworks\",")
 
+getMessageFromClient :: Client -> MVar ServerState -> IO ()
+getMessageFromClient (user, conn) state = forever $ do
+  msg <- WS.receiveData conn
+  if isFireworks msg
+  then readMVar state >>= broadcast msg
+  else putStrLn $ "Not broadcasting message: " ++ T.unpack msg
+  
 wsApplication :: MVar ServerState -> WS.ServerApp
 wsApplication state pending = do
   conn <- WS.acceptRequest pending
@@ -63,12 +68,9 @@ wsApplication state pending = do
     let client = ("none", conn)
         disconnect = modifyMVar_ state $ \s -> return $ removeClient client s
 
-    msg :: T.Text <- WS.receiveData conn
-    clients <- readMVar state
-        
     flip CE.finally disconnect $ do
       modifyMVar_ state $ \s -> return $ addClient client s
-      sendFireworks client state
+      getMessageFromClient client state
 
 data Slot = Schedule
   { name :: T.Text 
