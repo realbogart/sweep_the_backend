@@ -31,46 +31,6 @@ import Control.Concurrent.Async qualified as A
 import qualified Network.WebSockets as WS
 
 type Client = (T.Text, WS.Connection)
-type ServerState = [Client]
-
-addClient :: Client -> ServerState -> ServerState
-addClient c state = c : state
-
-removeClient :: Client -> ServerState -> ServerState
-removeClient c = filter ((== fst c) . fst) 
-
-numClients :: ServerState -> Int
-numClients = length
-
-clientExists :: Client -> ServerState -> Bool
-clientExists client = any ((== fst client) . fst)
-
-broadcast :: T.Text -> ServerState -> IO ()
-broadcast message clients = do
-  putStrLn $ "Broadcasting to " ++ show (length clients) ++ " clients:"
-  TIO.putStrLn message
-  forM_ clients $ \(_, conn) -> WS.sendTextData conn message
-
-isFireworks :: T.Text -> Bool
-isFireworks = T.isPrefixOf (T.pack "{\"type\":\"spawnFireworks\",")
-
-getMessageFromClient :: Client -> MVar ServerState -> IO ()
-getMessageFromClient (user, conn) state = forever $ do
-  msg <- WS.receiveData conn
-  if isFireworks msg
-  then readMVar state >>= broadcast msg
-  else putStrLn $ "Not broadcasting message: " ++ T.unpack msg
-  
-wsApplication :: MVar ServerState -> WS.ServerApp
-wsApplication state pending = do
-  conn <- WS.acceptRequest pending
-  WS.withPingThread conn 30 (return ()) $ do
-    let client = ("none", conn)
-        disconnect = modifyMVar_ state $ \s -> return $ removeClient client s
-
-    flip CE.finally disconnect $ do
-      modifyMVar_ state $ \s -> return $ addClient client s
-      getMessageFromClient client state
 
 data Slot = Schedule
   { name :: T.Text 
@@ -85,14 +45,54 @@ type Schedule = [Slot]
 instance ToJSON Slot
 instance FromJSON Slot
 
-type SweepTheAPI =  "getSchedule" :> Get '[JSON] Schedule :<|>
-                    "setSchedule" :> ReqBody '[JSON] Schedule :> Post '[JSON] NoContent :<|>
-                    Raw
-
 data SweepState = SweepState
   { schedule :: Schedule
   , currentSlot :: Int
-  } deriving (Show)
+  , clients :: [Client]
+  }
+
+addClient :: Client -> SweepState -> SweepState
+addClient c state = state { clients = c : clients state}
+
+removeClient :: Client -> SweepState -> SweepState
+removeClient c state = state { clients = filter ((== fst c) . fst) (clients state) } 
+
+numClients :: SweepState -> Int
+numClients SweepState{clients = c} = length c
+
+clientExists :: Client -> SweepState -> Bool
+clientExists client state = any ((== fst client) . fst) (clients state)
+
+broadcast :: T.Text -> SweepState -> IO ()
+broadcast message state = do
+  putStrLn $ "Broadcasting to " ++ show (numClients state) ++ " clients:"
+  TIO.putStrLn message
+  forM_ (clients state) $ \(_, conn) -> WS.sendTextData conn message
+
+isFireworks :: T.Text -> Bool
+isFireworks = T.isPrefixOf (T.pack "{\"type\":\"spawnFireworks\",")
+
+getMessageFromClient :: Client -> MVar SweepState -> IO ()
+getMessageFromClient (user, conn) state = forever $ do
+  msg <- WS.receiveData conn
+  if isFireworks msg
+  then readMVar state >>= broadcast msg
+  else putStrLn $ "Not broadcasting message: " ++ T.unpack msg
+  
+wsApplication :: MVar SweepState -> WS.ServerApp
+wsApplication state pending = do
+  conn <- WS.acceptRequest pending
+  WS.withPingThread conn 30 (return ()) $ do
+    let client = ("none", conn)
+        disconnect = modifyMVar_ state $ \s -> return $ removeClient client s
+
+    flip CE.finally disconnect $ do
+      modifyMVar_ state $ \s -> return $ addClient client s
+      getMessageFromClient client state
+
+type SweepTheAPI =  "getSchedule" :> Get '[JSON] Schedule :<|>
+                    "setSchedule" :> ReqBody '[JSON] Schedule :> Post '[JSON] NoContent :<|>
+                    Raw
 
 testSchedule :: Schedule
 testSchedule = [Schedule "hello" "now" "johan" "https://bild" "https://spotify-link"]
@@ -156,10 +156,9 @@ main = do
                         putStrLn $ "Successfully loaded '" ++ configFile ++ "'."
                         putStrLn $ "Starting HTTP server on port " ++ show http_port ++ "."
                         putStrLn $ "Starting websocket server on port " ++ show ws_port ++ "."
-                        sweepState <- newMVar $ SweepState{schedule = testSchedule, currentSlot = - 1}
-                        wsState <- newMVar []
+                        sweepState <- newMVar $ SweepState{schedule = testSchedule, currentSlot = - 1, clients = []}
                         servantAsync <- A.async $ run http_port (sweepTheApplication sweepState config)
-                        websocketAsync <- A.async $ WS.runServer "127.0.0.1" ws_port (wsApplication wsState)
+                        websocketAsync <- A.async $ WS.runServer "127.0.0.1" ws_port (wsApplication sweepState)
                         A.waitBoth servantAsync websocketAsync
                         return ()
 
