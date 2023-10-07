@@ -82,8 +82,7 @@ isFireworks = T.isPrefixOf (T.pack "{\"command\":\"spawnFireworks\",")
 getScheduleMsg :: MVar SweepState -> IO TL.Text
 getScheduleMsg state = do
   s <- readMVar state
-  let cmd = CommandMessage "setSchedule" s.schedule
-  return $ encodeToLazyText cmd
+  return $ encodeToLazyText $ CommandMessage "setSchedule" s.schedule
 
 getMessageFromClient :: Client -> MVar SweepState -> IO ()
 getMessageFromClient (user, conn) state = forever $ do
