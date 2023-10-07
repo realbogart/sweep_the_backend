@@ -1,6 +1,8 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main where
@@ -29,21 +31,26 @@ import Data.Text.Lazy.IO qualified as TLIO
 import System.FilePath.Posix
 import Control.Concurrent.Async qualified as A
 import qualified Network.WebSockets as WS
+import Data.Aeson.Text (encodeToLazyText)
 
 type Client = (T.Text, WS.Connection)
 
-data Slot = Schedule
+data Slot = Slot
   { name :: T.Text 
   , time :: T.Text
   , dj :: T.Text
   , imageLink :: T.Text
   , playlistLink :: T.Text
-  } deriving (Show, Eq, Generic)
+  } deriving (Show, Eq, Generic, ToJSON, FromJSON)
 
-type Schedule = [Slot]
+data Schedule = Schedule 
+  { shows :: [Slot]
+  } deriving (Show, Generic, ToJSON, FromJSON)
 
-instance ToJSON Slot
-instance FromJSON Slot
+data CommandMessage a = CommandMessage
+  { command :: T.Text 
+  , message :: a
+  } deriving (Show, Generic, ToJSON, FromJSON)
 
 data SweepState = SweepState
   { schedule :: Schedule
@@ -72,6 +79,9 @@ broadcast message state = do
 isFireworks :: T.Text -> Bool
 isFireworks = T.isPrefixOf (T.pack "{\"type\":\"spawnFireworks\",")
 
+getScheduleMsg :: MVar SweepState -> IO TL.Text
+getScheduleMsg _ = return $ encodeToLazyText (CommandMessage "setSchedule" testSchedule)
+
 getMessageFromClient :: Client -> MVar SweepState -> IO ()
 getMessageFromClient (user, conn) state = forever $ do
   msg <- WS.receiveData conn
@@ -86,6 +96,9 @@ wsApplication state pending = do
     let client = ("none", conn)
         disconnect = modifyMVar_ state $ \s -> return $ removeClient client s
 
+    scheduleMsg <- getScheduleMsg state
+    WS.sendTextData conn scheduleMsg
+
     flip CE.finally disconnect $ do
       modifyMVar_ state $ \s -> return $ addClient client s
       getMessageFromClient client state
@@ -95,7 +108,7 @@ type SweepTheAPI =  "getSchedule" :> Get '[JSON] Schedule :<|>
                     Raw
 
 testSchedule :: Schedule
-testSchedule = [Schedule "hello" "now" "johan" "https://bild" "https://spotify-link"]
+testSchedule = Schedule [Slot "hello" "now" "johan" "https://bild" "https://spotify-link"]
 
 sweepTheAPI :: Proxy SweepTheAPI
 sweepTheAPI = Proxy
@@ -136,6 +149,8 @@ getSchedule state = do
 
 setSchedule :: MVar SweepState -> Schedule -> Handler NoContent
 setSchedule state newSchedule = do
+  -- liftIO $ BS.putStrLn (decode newSchedule)
+  liftIO $ putStrLn "hello"
   liftIO $ modifyMVar_ state (\oldState -> return oldState {schedule = newSchedule}) 
   return NoContent
   
