@@ -151,8 +151,6 @@ getSchedule state = do
 
 setSchedule :: MVar SweepState -> Schedule -> Handler ()
 setSchedule state newSchedule = do
-  -- liftIO $ BS.putStrLn (decode newSchedule)
-  liftIO $ putStrLn "hello"
   liftIO $ modifyMVar_ state (\oldState -> return oldState {schedule = newSchedule}) 
   return ()
   
