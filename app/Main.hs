@@ -7,6 +7,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE NoFieldSelectors #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE StrictData #-}
 
 module Main where
 
@@ -79,7 +80,10 @@ broadcast :: T.Text -> SweepState -> IO ()
 broadcast message state = do
   putStrLn $ "Broadcasting to " ++ show (numClients state) ++ " clients:"
   TIO.putStrLn message
-  forM_ state.clients $ \(_, conn) -> WS.sendTextData conn message
+  forM_ state.clients $ \(clientID, conn) -> 
+    CE.catch  (WS.sendTextData conn message)
+              (\e ->  putStrLn $ "Failed to send message to client #" ++ 
+                      show clientID ++ ": " ++ show (e :: CE.SomeException))
 
 isFireworks :: T.Text -> Bool
 isFireworks = T.isPrefixOf (T.pack "{\"command\":\"spawnFireworks\",")
@@ -119,7 +123,7 @@ type SweepTheAPI =  "getSchedule" :> Get '[JSON] Schedule :<|>
                     Raw
 
 testSchedule :: Schedule
-testSchedule = Schedule [Slot "hello" "now" "johan" "https://bild" "https://spotify-link"]
+testSchedule = Schedule [Slot "Funky Friday" "10:00" "johan" "https://bild" "https://spotify-link"]
 
 sweepTheAPI :: Proxy SweepTheAPI
 sweepTheAPI = Proxy
@@ -160,9 +164,13 @@ getSchedule state = do
 
 setSchedule :: MVar SweepState -> Schedule -> Handler ()
 setSchedule state newSchedule = do
-  liftIO $ modifyMVar_ state (\oldState -> return oldState {schedule = newSchedule}) 
+  newState <- liftIO $ modifyMVar state $ \oldState -> do
+      let updatedState = oldState {schedule = newSchedule}
+      return (updatedState, updatedState) 
+  scheduleMsg <- liftIO $ getScheduleMsg state
+  liftIO $ broadcast (TL.toStrict scheduleMsg) newState
   return ()
-  
+
 sweepTheServer :: MVar SweepState -> Server SweepTheAPI
 sweepTheServer state = getSchedule state :<|> setSchedule state :<|> serveDirectoryFileServer staticPath
 
