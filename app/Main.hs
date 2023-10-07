@@ -35,8 +35,9 @@ import System.FilePath.Posix
 import Control.Concurrent.Async qualified as A
 import qualified Network.WebSockets as WS
 import Data.Aeson.Text (encodeToLazyText)
+import Network.WebSockets (PendingConnection)
 
-type Client = (T.Text, WS.Connection)
+type Client = (Int, WS.Connection)
 
 data Slot = Slot
   { name :: T.Text 
@@ -59,7 +60,11 @@ data SweepState = SweepState
   { schedule :: Schedule
   , currentSlot :: Int
   , clients :: [Client]
+  , current_client_id :: Int
   }
+
+generateClientId :: MVar SweepState -> IO Int
+generateClientId state = modifyMVar state (\s -> return (s{current_client_id = s.current_client_id + 1}, s.current_client_id))
 
 addClient :: Client -> SweepState -> SweepState
 addClient c state = state { clients = c : state.clients}
@@ -91,13 +96,17 @@ getMessageFromClient (user, conn) state = forever $ do
   then readMVar state >>= broadcast msg
   else putStrLn $ "Not broadcasting message: " ++ T.unpack msg
   
-wsApplication :: MVar SweepState -> WS.ServerApp
+wsApplication :: MVar SweepState -> PendingConnection -> IO ()
 wsApplication state pending = do
   conn <- WS.acceptRequest pending
-  WS.withPingThread conn 30 (return ()) $ do
-    let client = ("none", conn)
-        disconnect = modifyMVar_ state $ \s -> return $ removeClient client s
+  clientID <- generateClientId state
 
+  WS.withPingThread conn 30 (return ()) $ do
+    let client = (clientID, conn)
+        disconnect = do modifyMVar_ state $ \s -> return $ removeClient client s
+                        putStrLn $ "Client #" ++ show clientID ++ " disconnected."
+
+    putStrLn $ "Client #" ++ show clientID ++ " connected."
     scheduleMsg <- getScheduleMsg state
     WS.sendTextData conn scheduleMsg
 
@@ -171,7 +180,10 @@ main = do
                         putStrLn $ "Successfully loaded '" ++ configFile ++ "'."
                         putStrLn $ "Starting HTTP server on port " ++ show http_port ++ "."
                         putStrLn $ "Starting websocket server on port " ++ show ws_port ++ "."
-                        sweepState <- newMVar $ SweepState{schedule = testSchedule, currentSlot = - 1, clients = []}
+                        sweepState <- newMVar $ SweepState{ schedule = testSchedule, 
+                                                            currentSlot = - 1, 
+                                                            clients = [], 
+                                                            current_client_id = 0}
                         servantAsync <- A.async $ run http_port (sweepTheApplication sweepState config)
                         websocketAsync <- A.async $ WS.runServer "127.0.0.1" ws_port (wsApplication sweepState)
                         A.waitBoth servantAsync websocketAsync
