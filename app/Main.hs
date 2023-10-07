@@ -70,7 +70,7 @@ addClient :: Client -> SweepState -> SweepState
 addClient c state = state { clients = c : state.clients}
 
 removeClient :: Client -> SweepState -> SweepState
-removeClient c state = state { clients = filter ((== fst c) . fst) state.clients } 
+removeClient c state = state { clients = filter ((/= fst c) . fst) state.clients } 
 
 numClients :: SweepState -> Int
 numClients SweepState{clients = c} = length c
