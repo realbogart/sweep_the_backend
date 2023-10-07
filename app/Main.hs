@@ -4,6 +4,9 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NoFieldSelectors #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 
 module Main where
 
@@ -59,28 +62,28 @@ data SweepState = SweepState
   }
 
 addClient :: Client -> SweepState -> SweepState
-addClient c state = state { clients = c : clients state}
+addClient c state = state { clients = c : state.clients}
 
 removeClient :: Client -> SweepState -> SweepState
-removeClient c state = state { clients = filter ((== fst c) . fst) (clients state) } 
+removeClient c state = state { clients = filter ((== fst c) . fst) state.clients } 
 
 numClients :: SweepState -> Int
 numClients SweepState{clients = c} = length c
-
-clientExists :: Client -> SweepState -> Bool
-clientExists client state = any ((== fst client) . fst) (clients state)
 
 broadcast :: T.Text -> SweepState -> IO ()
 broadcast message state = do
   putStrLn $ "Broadcasting to " ++ show (numClients state) ++ " clients:"
   TIO.putStrLn message
-  forM_ (clients state) $ \(_, conn) -> WS.sendTextData conn message
+  forM_ state.clients $ \(_, conn) -> WS.sendTextData conn message
 
 isFireworks :: T.Text -> Bool
-isFireworks = T.isPrefixOf (T.pack "{\"type\":\"spawnFireworks\",")
+isFireworks = T.isPrefixOf (T.pack "{\"command\":\"spawnFireworks\",")
 
 getScheduleMsg :: MVar SweepState -> IO TL.Text
-getScheduleMsg _ = return $ encodeToLazyText (CommandMessage "setSchedule" testSchedule)
+getScheduleMsg state = do
+  s <- readMVar state
+  let cmd = CommandMessage "setSchedule" s.schedule
+  return $ encodeToLazyText cmd
 
 getMessageFromClient :: Client -> MVar SweepState -> IO ()
 getMessageFromClient (user, conn) state = forever $ do
@@ -104,7 +107,7 @@ wsApplication state pending = do
       getMessageFromClient client state
 
 type SweepTheAPI =  "getSchedule" :> Get '[JSON] Schedule :<|>
-                    "setSchedule" :> ReqBody '[JSON] Schedule :> Post '[JSON] NoContent :<|>
+                    "setSchedule" :> ReqBody '[JSON] Schedule :> Post '[JSON] () :<|>
                     Raw
 
 testSchedule :: Schedule
@@ -145,14 +148,14 @@ htmlMiddleware config app req respond
 getSchedule :: MVar SweepState -> Handler Schedule
 getSchedule state = do 
   sweepState <- liftIO (readMVar state)
-  return $ schedule sweepState
+  return sweepState.schedule
 
-setSchedule :: MVar SweepState -> Schedule -> Handler NoContent
+setSchedule :: MVar SweepState -> Schedule -> Handler ()
 setSchedule state newSchedule = do
   -- liftIO $ BS.putStrLn (decode newSchedule)
   liftIO $ putStrLn "hello"
   liftIO $ modifyMVar_ state (\oldState -> return oldState {schedule = newSchedule}) 
-  return NoContent
+  return ()
   
 sweepTheServer :: MVar SweepState -> Server SweepTheAPI
 sweepTheServer state = getSchedule state :<|> setSchedule state :<|> serveDirectoryFileServer staticPath
