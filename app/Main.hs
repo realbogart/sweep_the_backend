@@ -37,6 +37,7 @@ import Control.Concurrent.Async qualified as A
 import qualified Network.WebSockets as WS
 import Data.Aeson.Text (encodeToLazyText)
 import Network.WebSockets (PendingConnection)
+import Data.Maybe (fromMaybe)
 
 type Client = (Int, WS.Connection)
 
@@ -49,7 +50,7 @@ data Slot = Slot
   } deriving (Show, Eq, Generic, ToJSON, FromJSON)
 
 data Schedule = Schedule 
-  { shows :: [Slot]
+  { slots :: [Slot]
   } deriving (Show, Generic, ToJSON, FromJSON)
 
 data CommandMessage a = CommandMessage
@@ -57,15 +58,20 @@ data CommandMessage a = CommandMessage
   , message :: a
   } deriving (Show, Generic, ToJSON, FromJSON)
 
+data ScheduleMessage = ScheduleMessage
+  { activeSchedule :: Schedule
+  , activeSlot :: Int
+  } deriving (Show, Generic, ToJSON, FromJSON)
+
 data SweepState = SweepState
   { schedule :: Schedule
-  , currentSlot :: Int
+  , currentActiveSlot :: Int
   , clients :: [Client]
-  , current_client_id :: Int
+  , currentClientID :: Int
   }
 
 generateClientId :: MVar SweepState -> IO Int
-generateClientId state = modifyMVar state (\s -> return (s{current_client_id = s.current_client_id + 1}, s.current_client_id))
+generateClientId state = modifyMVar state (\s -> return (s{currentClientID = s.currentClientID + 1}, s.currentClientID))
 
 addClient :: Client -> SweepState -> SweepState
 addClient c state = state { clients = c : state.clients}
@@ -91,7 +97,7 @@ isFireworks = T.isPrefixOf (T.pack "{\"command\":\"spawnFireworks\",")
 getScheduleMsg :: MVar SweepState -> IO TL.Text
 getScheduleMsg state = do
   s <- readMVar state
-  return $ encodeToLazyText $ CommandMessage "setSchedule" s.schedule
+  return $ encodeToLazyText $ CommandMessage "setSchedule" (ScheduleMessage s.schedule s.currentActiveSlot)
 
 getMessageFromClient :: Client -> MVar SweepState -> IO ()
 getMessageFromClient (user, conn) state = forever $ do
@@ -120,6 +126,7 @@ wsApplication state pending = do
 
 type SweepTheAPI =  "getSchedule" :> Get '[JSON] Schedule :<|>
                     "setSchedule" :> ReqBody '[JSON] Schedule :> Post '[JSON] () :<|>
+                    "setActiveSlot" :> QueryParam "id" Int :> Get '[JSON] () :<|>
                     Raw
 
 testSchedule :: Schedule
@@ -171,8 +178,20 @@ setSchedule state newSchedule = do
   liftIO $ broadcast (TL.toStrict scheduleMsg) newState
   return ()
 
+setActiveSlot :: MVar SweepState -> Maybe Int -> Handler ()
+setActiveSlot state newActiveSlot = do
+  newState <- liftIO $ modifyMVar state $ \oldState -> do
+      let updatedState = oldState {currentActiveSlot = fromMaybe (- 1) newActiveSlot}
+      return (updatedState, updatedState) 
+  scheduleMsg <- liftIO $ getScheduleMsg state
+  liftIO $ broadcast (TL.toStrict scheduleMsg) newState
+  return ()
+
 sweepTheServer :: MVar SweepState -> Server SweepTheAPI
-sweepTheServer state = getSchedule state :<|> setSchedule state :<|> serveDirectoryFileServer staticPath
+sweepTheServer state =  getSchedule state :<|> 
+                        setSchedule state :<|> 
+                        setActiveSlot state :<|>
+                        serveDirectoryFileServer staticPath
 
 sweepTheApplication :: MVar SweepState -> SweepConfig -> Application
 sweepTheApplication state config = htmlMiddleware config $ serve sweepTheAPI (sweepTheServer state)
@@ -189,9 +208,9 @@ main = do
                         putStrLn $ "Starting HTTP server on port " ++ show http_port ++ "."
                         putStrLn $ "Starting websocket server on port " ++ show ws_port ++ "."
                         sweepState <- newMVar $ SweepState{ schedule = testSchedule, 
-                                                            currentSlot = - 1, 
+                                                            currentActiveSlot = - 1, 
                                                             clients = [], 
-                                                            current_client_id = 0}
+                                                            currentClientID = 0}
                         servantAsync <- A.async $ run http_port (sweepTheApplication sweepState config)
                         websocketAsync <- A.async $ WS.runServer "127.0.0.1" ws_port (wsApplication sweepState)
                         A.waitBoth servantAsync websocketAsync
