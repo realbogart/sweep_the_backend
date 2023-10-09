@@ -196,9 +196,6 @@ testSchedule = Schedule [Slot "Funky Friday" "10:00" "johan" "https://bild" "htt
 sweepTheAPI :: Proxy SweepTheAPI
 sweepTheAPI = Proxy
 
-staticPath :: String
-staticPath = "static/public"
-
 type Replacement = (TL.Text, TL.Text)
 
 replacePlaceholders :: SweepConfig -> TL.Text -> TL.Text
@@ -217,14 +214,11 @@ getModifiedHtml config filePath = do
 
 serveModifiedHtml :: SweepConfig -> FilePath -> Application
 serveModifiedHtml config filePath req respond = do
-  modifiedContent <- getModifiedHtml config (staticPath ++ "/" ++ filePath)
+  modifiedContent <- getModifiedHtml config (T.unpack config.path_public ++ "/" ++ filePath)
   respond $ responseLBS status200 [("Content-Type", "text/html")] (TLE.encodeUtf8 modifiedContent)
 
 isHtmlRequest :: Request -> Bool
 isHtmlRequest req = ".html" `L.isSuffixOf` BS.unpack (rawPathInfo req)
-
-isAdminRequest :: Request -> Bool
-isAdminRequest req = "admin.html" `L.isSuffixOf` BS.unpack (rawPathInfo req)
 
 htmlMiddleware :: SweepConfig -> Middleware
 htmlMiddleware config app req respond
@@ -276,11 +270,13 @@ loginHandler state config creds = do
                                           , setCookieHttpOnly = True
                                           }
             return $ addHeader cookie "Login successful"
-      else throwError err401 { errBody = "Access denied" }
+      else do
+        liftIO $ putStrLn "Admin login failed. Wrong password."
+        throwError err401 { errBody = "Access denied" }
 
 adminHandler :: SweepConfig -> AdminUser -> Handler RawHtml
 adminHandler config _ = do 
-  content <- liftIO $ getModifiedHtml config "static/private/admin.html"
+  content <- liftIO $ getModifiedHtml config (T.unpack config.path_private ++ "/admin.html")
   return $ RawHtml $ TLE.encodeUtf8 content
 
 sweepTheServer :: MVar SweepState -> SweepConfig -> Server SweepTheAPI
@@ -289,7 +285,7 @@ sweepTheServer state config = getSchedule state :<|>
                               setActiveSlot state :<|>
                               loginHandler state config :<|>
                               adminHandler config :<|>
-                              serveDirectoryFileServer staticPath
+                              serveDirectoryFileServer (T.unpack config.path_public)
 
 sweepTheApplication :: MVar SweepState -> SweepConfig -> Application
 sweepTheApplication state config =  htmlMiddleware config $ 

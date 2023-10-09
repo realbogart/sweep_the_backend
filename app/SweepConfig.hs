@@ -17,6 +17,8 @@ data SweepConfig = Config
   , stream_ip :: T.Text
   , password :: T.Text
   , default_background :: T.Text
+  , path_public :: T.Text
+  , path_private :: T.Text
   } deriving (Show, Generic)
 
 instance ToJSON SweepConfig
