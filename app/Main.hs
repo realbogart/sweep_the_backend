@@ -89,7 +89,8 @@ data AdminCredentials = AdminCredentials
   { password :: T.Text 
   } deriving (Eq, Show, Generic, ToJSON, FromJSON)
 
-throwAdminLoginError = throwError $ err301 { errHeaders = [("Location", "admin_login.html"), ("Cache-Control", "no-store, no-cache, must-revalidate")] }
+throwAdminLoginError = throwError $ err301  {errHeaders = [ ("Location", "admin_login.html"), 
+                                                            ("Cache-Control", "no-store, no-cache, must-revalidate")]}
 
 isValidJWT :: JWTSettings -> BS.ByteString -> Handler AdminUser
 isValidJWT jwtSettings jwt = do
