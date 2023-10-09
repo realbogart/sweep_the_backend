@@ -8,6 +8,8 @@
 {-# LANGUAGE NoFieldSelectors #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UndecidableInstances  #-}
 
 module Main where
 
@@ -15,6 +17,7 @@ import SweepConfig
 
 import Servant
 import Servant.API.Header qualified as SH
+import Servant.Server.Experimental.Auth as SA
 import Servant.Auth.Server
 import GHC.Generics
 import Network.Wai.Handler.Warp
@@ -43,7 +46,7 @@ import Data.Aeson.Text (encodeToLazyText)
 import Network.WebSockets (PendingConnection)
 import Data.Maybe (fromMaybe)
 import Crypto.Random (getRandomBytes)
-import Web.Cookie (SetCookie(..), defaultSetCookie)
+import Web.Cookie (SetCookie(..), defaultSetCookie, parseCookies)
 
 type Client = (Int, WS.Connection)
 
@@ -84,6 +87,24 @@ data AdminUser = AdminUser
 data AdminCredentials = AdminCredentials
   { password :: T.Text 
   } deriving (Eq, Show, Generic, ToJSON, FromJSON)
+
+isValidJWT :: JWTSettings -> BS.ByteString -> Handler AdminUser
+isValidJWT jwtSettings jwt = do
+  verified <- liftIO $ verifyJWT jwtSettings jwt 
+  case verified of
+    Nothing -> throwError (err403 { errBody = BS.fromStrict ("Invalid jwt: " <> jwt) })
+    Just a -> return a
+
+authHandler :: MVar SweepState -> AuthHandler Request AdminUser
+authHandler state = SA.mkAuthHandler handler
+  where
+    maybeToEither e = maybe (Left e) Right
+    throw401 msg = throwError $ err401 { errBody = msg }
+    handler req = do 
+      s <- liftIO $ readMVar state
+      either throw401 (isValidJWT s.jwtSettings) $ do
+        cookie <- maybeToEither "Missing cookie header" $ lookup "cookie" $ requestHeaders req
+        maybeToEither "Missing JWT in cookie" $ lookup "jwt" $ parseCookies cookie
 
 getJWTSettings :: BS.ByteString -> JWTSettings
 getJWTSettings secret = defaultJWTSettings (fromSecret secret)
@@ -145,13 +166,19 @@ wsApplication state pending = do
       modifyMVar_ state $ \s -> return $ addClient client s
       getMessageFromClient client state
 
+type instance AuthServerData (AuthProtect "cookie-jwt-auth") = AdminUser
+
 type SweepTheAPI =  "getSchedule" :> Get '[JSON] Schedule :<|>
                     "setSchedule" :> ReqBody '[JSON] Schedule :> Post '[JSON] () :<|>
                     "setActiveSlot" :> QueryParam "id" Int :> Get '[JSON] () :<|>
                     "login" :> ReqBody '[JSON] AdminCredentials 
                             :> Post '[JSON] (Headers '[SH.Header "Set-Cookie" SetCookie] T.Text) :<|>
+                    "test" :> AuthProtect "cookie-jwt-auth" :> Get '[PlainText] T.Text :<|>
                     -- "admin" :> Auth '[JWT] AdminUser :> Get '[PlainText] T.Text :<|>
                     Raw
+
+sweepTheContext :: MVar SweepState -> Context (AuthHandler Request AdminUser ': '[])
+sweepTheContext state = authHandler state :. EmptyContext
 
 testSchedule :: Schedule
 testSchedule = Schedule [Slot "Funky Friday" "10:00" "johan" "https://bild" "https://spotify-link"]
@@ -242,15 +269,20 @@ loginHandler state config creds = do
             return $ addHeader cookie "Login successful"
       else throwError err401 { errBody = "Access denied" }
 
+testAuthHandler :: AdminUser -> Handler T.Text
+testAuthHandler _ = return $ T.pack "hello admin"
+
 sweepTheServer :: MVar SweepState -> SweepConfig -> Server SweepTheAPI
 sweepTheServer state config = getSchedule state :<|> 
                               setSchedule state :<|> 
                               setActiveSlot state :<|>
                               loginHandler state config :<|>
+                              testAuthHandler :<|>
                               serveDirectoryFileServer staticPath
 
 sweepTheApplication :: MVar SweepState -> SweepConfig -> Application
-sweepTheApplication state config = htmlMiddleware config $ serve sweepTheAPI (sweepTheServer state config)
+sweepTheApplication state config =  htmlMiddleware config $ 
+                                    serveWithContext sweepTheAPI (sweepTheContext state) (sweepTheServer state config)
 
 main :: IO ()
 main = do 
