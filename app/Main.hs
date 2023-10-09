@@ -47,6 +47,7 @@ import Network.WebSockets (PendingConnection)
 import Data.Maybe (fromMaybe)
 import Crypto.Random (getRandomBytes)
 import Web.Cookie (SetCookie(..), defaultSetCookie, parseCookies)
+import Network.HTTP.Media ((//), (/:))
 
 type Client = (Int, WS.Connection)
 
@@ -88,11 +89,13 @@ data AdminCredentials = AdminCredentials
   { password :: T.Text 
   } deriving (Eq, Show, Generic, ToJSON, FromJSON)
 
+throwAdminLoginError = throwError $ err301 { errHeaders = [("Location", "admin_login.html"), ("Cache-Control", "no-store, no-cache, must-revalidate")] }
+
 isValidJWT :: JWTSettings -> BS.ByteString -> Handler AdminUser
 isValidJWT jwtSettings jwt = do
   verified <- liftIO $ verifyJWT jwtSettings jwt 
   case verified of
-    Nothing -> throwError (err403 { errBody = BS.fromStrict ("Invalid jwt: " <> jwt) })
+    Nothing -> throwAdminLoginError
     Just a -> return a
 
 authHandler :: MVar SweepState -> AuthHandler Request AdminUser
@@ -102,7 +105,7 @@ authHandler state = SA.mkAuthHandler handler
     throw401 msg = throwError $ err401 { errBody = msg }
     handler req = do 
       s <- liftIO $ readMVar state
-      either throw401 (isValidJWT s.jwtSettings) $ do
+      either (const throwAdminLoginError) (isValidJWT s.jwtSettings) $ do
         cookie <- maybeToEither "Missing cookie header" $ lookup "cookie" $ requestHeaders req
         maybeToEither "Missing JWT in cookie" $ lookup "jwt" $ parseCookies cookie
 
@@ -168,13 +171,20 @@ wsApplication state pending = do
 
 type instance AuthServerData (AuthProtect "cookie-jwt-auth") = AdminUser
 
+data HTML = HTML
+newtype RawHtml = RawHtml { unRaw :: BSL.ByteString }
+instance Accept HTML where
+  contentType _ = "text" // "html" /: ("charset", "utf-8")
+
+instance MimeRender HTML RawHtml where
+  mimeRender _ html = html.unRaw
+
 type SweepTheAPI =  "getSchedule" :> Get '[JSON] Schedule :<|>
                     "setSchedule" :> ReqBody '[JSON] Schedule :> Post '[JSON] () :<|>
                     "setActiveSlot" :> QueryParam "id" Int :> Get '[JSON] () :<|>
                     "login" :> ReqBody '[JSON] AdminCredentials 
                             :> Post '[JSON] (Headers '[SH.Header "Set-Cookie" SetCookie] T.Text) :<|>
-                    "test" :> AuthProtect "cookie-jwt-auth" :> Get '[PlainText] T.Text :<|>
-                    -- "admin" :> Auth '[JWT] AdminUser :> Get '[PlainText] T.Text :<|>
+                    "admin" :> AuthProtect "cookie-jwt-auth" :> Get '[HTML] RawHtml :<|>
                     Raw
 
 sweepTheContext :: MVar SweepState -> Context (AuthHandler Request AdminUser ': '[])
@@ -219,7 +229,6 @@ isAdminRequest req = "admin.html" `L.isSuffixOf` BS.unpack (rawPathInfo req)
 htmlMiddleware :: SweepConfig -> Middleware
 htmlMiddleware config app req respond
   | null path = serveModifiedHtml config "index.html" req respond
-  -- | isAdminRequest req = serveModifiedHtml config "" 
   | isHtmlRequest req = serveModifiedHtml config (joinPath $ map T.unpack path) req respond
   | otherwise = app req respond
     where path = pathInfo req
@@ -269,15 +278,17 @@ loginHandler state config creds = do
             return $ addHeader cookie "Login successful"
       else throwError err401 { errBody = "Access denied" }
 
-testAuthHandler :: AdminUser -> Handler T.Text
-testAuthHandler _ = return $ T.pack "hello admin"
+adminHandler :: SweepConfig -> AdminUser -> Handler RawHtml
+adminHandler config _ = do 
+  content <- liftIO $ getModifiedHtml config "admin.html"
+  return $ RawHtml $ TLE.encodeUtf8 content
 
 sweepTheServer :: MVar SweepState -> SweepConfig -> Server SweepTheAPI
 sweepTheServer state config = getSchedule state :<|> 
                               setSchedule state :<|> 
                               setActiveSlot state :<|>
                               loginHandler state config :<|>
-                              testAuthHandler :<|>
+                              adminHandler config :<|>
                               serveDirectoryFileServer staticPath
 
 sweepTheApplication :: MVar SweepState -> SweepConfig -> Application

@@ -29,6 +29,7 @@ executable SweepTheBackend
                       websockets ==0.12.7.3,
                       cryptonite ==0.30,
                       base64-bytestring ==1.2.1.0,
+                      http-media ==0.8.1.1,
                       cookie ==0.4.6,
                       async ==2.2.4
     hs-source-dirs:   app
