@@ -14,6 +14,7 @@ module Main where
 import SweepConfig
 
 import Servant
+import Servant.Auth.Server
 import GHC.Generics
 import Network.Wai.Handler.Warp
 import Network.Wai
@@ -24,6 +25,8 @@ import Control.Monad.IO.Class (MonadIO(liftIO))
 import Control.Monad
 import Control.Exception qualified as CE
 import Data.ByteString.Char8 qualified as BS
+import Data.ByteString.Base64 qualified as BS64
+import Data.ByteString.Lazy.Char8 qualified as BSL
 import Data.Char
 import Data.List qualified as L
 import Data.Text qualified as T
@@ -38,6 +41,7 @@ import qualified Network.WebSockets as WS
 import Data.Aeson.Text (encodeToLazyText)
 import Network.WebSockets (PendingConnection)
 import Data.Maybe (fromMaybe)
+import Crypto.Random (getRandomBytes)
 
 type Client = (Int, WS.Connection)
 
@@ -68,7 +72,22 @@ data SweepState = SweepState
   , currentActiveSlot :: Int
   , clients :: [Client]
   , currentClientID :: Int
+  , jwtSettings :: JWTSettings
   }
+
+data AdminUser = AdminUser
+  { username :: T.Text 
+  } deriving (Show, Generic, ToJSON, ToJWT, FromJSON, FromJWT)
+
+data AdminCredentials = AdminCredentials
+  { password :: T.Text 
+  } deriving (Eq, Show, Generic, ToJSON, FromJSON)
+
+getJWTSettings :: BS.ByteString -> JWTSettings
+getJWTSettings secret = defaultJWTSettings (fromSecret secret)
+
+generateJWTSecret :: IO BS.ByteString
+generateJWTSecret = BS64.encode <$> getRandomBytes 64
 
 generateClientId :: MVar SweepState -> IO Int
 generateClientId state = modifyMVar state (\s -> return (s{currentClientID = s.currentClientID + 1}, s.currentClientID))
@@ -127,6 +146,8 @@ wsApplication state pending = do
 type SweepTheAPI =  "getSchedule" :> Get '[JSON] Schedule :<|>
                     "setSchedule" :> ReqBody '[JSON] Schedule :> Post '[JSON] () :<|>
                     "setActiveSlot" :> QueryParam "id" Int :> Get '[JSON] () :<|>
+                    "login" :> ReqBody '[JSON] AdminCredentials :> Post '[JSON] T.Text :<|>
+                    -- "admin" :> Auth '[JWT] AdminUser :> Get '[PlainText] T.Text :<|>
                     Raw
 
 testSchedule :: Schedule
@@ -138,28 +159,37 @@ sweepTheAPI = Proxy
 staticPath :: String
 staticPath = "static"
 
-isHtmlRequest :: Request -> Bool
-isHtmlRequest req = ".html" `L.isSuffixOf` BS.unpack (rawPathInfo req)
-
 type Replacement = (TL.Text, TL.Text)
 
 replacePlaceholders :: SweepConfig -> TL.Text -> TL.Text
 replacePlaceholders config content = 
   L.foldl' replace content replacements
     where replacements :: [Replacement]
-          replacements =  [ ("<websocket_server", TL.fromStrict $ websocket_server_ip config)
-                          , ("<stream_ip>", TL.fromStrict $ stream_ip config)]
+          replacements =  [ ("<websocket_server", TL.fromStrict config.websocket_server_ip)
+                          , ("<stream_ip>", TL.fromStrict config.stream_ip)
+                          , ("<password>", TL.fromStrict config.password)]
           replace haystack (needle,replacement) = TL.replace needle replacement haystack
+
+getModifiedHtml :: SweepConfig -> FilePath -> IO TL.Text
+getModifiedHtml config filePath = do
+  content <- TLIO.readFile (staticPath ++ "/" ++ filePath)
+  return $ replacePlaceholders config content
 
 serveModifiedHtml :: SweepConfig -> FilePath -> Application
 serveModifiedHtml config filePath req respond = do
-  content <- TLIO.readFile (staticPath ++ "/" ++ filePath)
-  let modifiedContent = replacePlaceholders config content
+  modifiedContent <- getModifiedHtml config filePath
   respond $ responseLBS status200 [("Content-Type", "text/html")] (TLE.encodeUtf8 modifiedContent)
+
+isHtmlRequest :: Request -> Bool
+isHtmlRequest req = ".html" `L.isSuffixOf` BS.unpack (rawPathInfo req)
+
+isAdminRequest :: Request -> Bool
+isAdminRequest req = "admin.html" `L.isSuffixOf` BS.unpack (rawPathInfo req)
 
 htmlMiddleware :: SweepConfig -> Middleware
 htmlMiddleware config app req respond
   | null path = serveModifiedHtml config "index.html" req respond
+  -- | isAdminRequest req = serveModifiedHtml config "" 
   | isHtmlRequest req = serveModifiedHtml config (joinPath $ map T.unpack path) req respond
   | otherwise = app req respond
     where path = pathInfo req
@@ -187,14 +217,28 @@ setActiveSlot state newActiveSlot = do
   liftIO $ broadcast (TL.toStrict scheduleMsg) newState
   return ()
 
-sweepTheServer :: MVar SweepState -> Server SweepTheAPI
-sweepTheServer state =  getSchedule state :<|> 
-                        setSchedule state :<|> 
-                        setActiveSlot state :<|>
-                        serveDirectoryFileServer staticPath
+loginHandler :: MVar SweepState -> SweepConfig -> AdminCredentials -> Handler T.Text
+loginHandler state config creds = do
+  liftIO $ putStrLn "Someone is attempting to login as admin."
+  s <- liftIO $ readMVar state
+  if creds.password == config.password
+      then do 
+        liftIO $ putStrLn "Admin login successful. Creating JWT"
+        jwt <- liftIO $ makeJWT (AdminUser "admin") s.jwtSettings Nothing 
+        case jwt of
+          Left err -> throwError err500 {errBody = BSL.pack ("Failed to create JWT: " ++ show err)}
+          Right token -> return $ TE.decodeUtf8 $ BS.toStrict token
+      else throwError err401 { errBody = "Access denied" }
+
+sweepTheServer :: MVar SweepState -> SweepConfig -> Server SweepTheAPI
+sweepTheServer state config = getSchedule state :<|> 
+                              setSchedule state :<|> 
+                              setActiveSlot state :<|>
+                              loginHandler state config :<|>
+                              serveDirectoryFileServer staticPath
 
 sweepTheApplication :: MVar SweepState -> SweepConfig -> Application
-sweepTheApplication state config = htmlMiddleware config $ serve sweepTheAPI (sweepTheServer state)
+sweepTheApplication state config = htmlMiddleware config $ serve sweepTheAPI (sweepTheServer state config)
 
 main :: IO ()
 main = do 
@@ -202,15 +246,18 @@ main = do
   result <- readConfig configFile
   case result of
     Left err -> putStrLn ("Invalid configuration: " ++ err)
-    Right config -> do  let http_port = httpserver_port config
-                        let ws_port = websocket_port config
+    Right config -> do  let http_port = config.httpserver_port
+                        let ws_port = config.websocket_port
                         putStrLn $ "Successfully loaded '" ++ configFile ++ "'."
                         putStrLn $ "Starting HTTP server on port " ++ show http_port ++ "."
                         putStrLn $ "Starting websocket server on port " ++ show ws_port ++ "."
-                        sweepState <- newMVar $ SweepState{ schedule = testSchedule, 
-                                                            currentActiveSlot = - 1, 
-                                                            clients = [], 
-                                                            currentClientID = 0}
+                        jwtSecret <- generateJWTSecret
+                        sweepState <- newMVar $ SweepState{ schedule = testSchedule
+                                                          , currentActiveSlot = - 1 
+                                                          , clients = []
+                                                          , currentClientID = 0
+                                                          , jwtSettings = getJWTSettings jwtSecret
+                                                          }
                         servantAsync <- A.async $ run http_port (sweepTheApplication sweepState config)
                         websocketAsync <- A.async $ WS.runServer "127.0.0.1" ws_port (wsApplication sweepState)
                         A.waitBoth servantAsync websocketAsync

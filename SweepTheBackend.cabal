@@ -17,6 +17,8 @@ executable SweepTheBackend
     build-depends:    base ^>=4.18.1.0,
                       servant ==0.20,
                       servant-server ==0.20,
+                      servant-auth ==0.4.1.0,
+                      servant-auth-server ==0.4.8.0,
                       text ==2.0.2,
                       warp ==3.3.29,
                       aeson ==2.1.2.1,
@@ -25,6 +27,8 @@ executable SweepTheBackend
                       http-types ==0.12.3,
                       filepath ==1.4.100.4,
                       websockets ==0.12.7.3,
+                      cryptonite ==0.30,
+                      base64-bytestring ==1.2.1.0,
                       async ==2.2.4
     hs-source-dirs:   app
     default-language: GHC2021
