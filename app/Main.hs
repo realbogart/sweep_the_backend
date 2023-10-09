@@ -197,7 +197,7 @@ sweepTheAPI :: Proxy SweepTheAPI
 sweepTheAPI = Proxy
 
 staticPath :: String
-staticPath = "static"
+staticPath = "static/public"
 
 type Replacement = (TL.Text, TL.Text)
 
@@ -212,12 +212,12 @@ replacePlaceholders config content =
 
 getModifiedHtml :: SweepConfig -> FilePath -> IO TL.Text
 getModifiedHtml config filePath = do
-  content <- TLIO.readFile (staticPath ++ "/" ++ filePath)
+  content <- TLIO.readFile filePath
   return $ replacePlaceholders config content
 
 serveModifiedHtml :: SweepConfig -> FilePath -> Application
 serveModifiedHtml config filePath req respond = do
-  modifiedContent <- getModifiedHtml config filePath
+  modifiedContent <- getModifiedHtml config (staticPath ++ "/" ++ filePath)
   respond $ responseLBS status200 [("Content-Type", "text/html")] (TLE.encodeUtf8 modifiedContent)
 
 isHtmlRequest :: Request -> Bool
@@ -280,7 +280,7 @@ loginHandler state config creds = do
 
 adminHandler :: SweepConfig -> AdminUser -> Handler RawHtml
 adminHandler config _ = do 
-  content <- liftIO $ getModifiedHtml config "admin.html"
+  content <- liftIO $ getModifiedHtml config "static/private/admin.html"
   return $ RawHtml $ TLE.encodeUtf8 content
 
 sweepTheServer :: MVar SweepState -> SweepConfig -> Server SweepTheAPI
