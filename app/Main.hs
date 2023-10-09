@@ -14,6 +14,7 @@ module Main where
 import SweepConfig
 
 import Servant
+import Servant.API.Header qualified as SH
 import Servant.Auth.Server
 import GHC.Generics
 import Network.Wai.Handler.Warp
@@ -42,6 +43,7 @@ import Data.Aeson.Text (encodeToLazyText)
 import Network.WebSockets (PendingConnection)
 import Data.Maybe (fromMaybe)
 import Crypto.Random (getRandomBytes)
+import Web.Cookie (SetCookie(..), defaultSetCookie)
 
 type Client = (Int, WS.Connection)
 
@@ -146,7 +148,8 @@ wsApplication state pending = do
 type SweepTheAPI =  "getSchedule" :> Get '[JSON] Schedule :<|>
                     "setSchedule" :> ReqBody '[JSON] Schedule :> Post '[JSON] () :<|>
                     "setActiveSlot" :> QueryParam "id" Int :> Get '[JSON] () :<|>
-                    "login" :> ReqBody '[JSON] AdminCredentials :> Post '[JSON] T.Text :<|>
+                    "login" :> ReqBody '[JSON] AdminCredentials 
+                            :> Post '[JSON] (Headers '[SH.Header "Set-Cookie" SetCookie] T.Text) :<|>
                     -- "admin" :> Auth '[JWT] AdminUser :> Get '[PlainText] T.Text :<|>
                     Raw
 
@@ -217,7 +220,10 @@ setActiveSlot state newActiveSlot = do
   liftIO $ broadcast (TL.toStrict scheduleMsg) newState
   return ()
 
-loginHandler :: MVar SweepState -> SweepConfig -> AdminCredentials -> Handler T.Text
+loginHandler :: MVar SweepState -> 
+                SweepConfig -> 
+                AdminCredentials -> 
+                Handler (Headers '[SH.Header "Set-Cookie" SetCookie] T.Text)
 loginHandler state config creds = do
   liftIO $ putStrLn "Someone is attempting to login as admin."
   s <- liftIO $ readMVar state
@@ -227,7 +233,13 @@ loginHandler state config creds = do
         jwt <- liftIO $ makeJWT (AdminUser "admin") s.jwtSettings Nothing 
         case jwt of
           Left err -> throwError err500 {errBody = BSL.pack ("Failed to create JWT: " ++ show err)}
-          Right token -> return $ TE.decodeUtf8 $ BS.toStrict token
+          Right token -> do
+            let cookie = defaultSetCookie { setCookieName = "jwt"
+                                          , setCookieValue = BS.toStrict token
+                                          , setCookiePath = Just "/"
+                                          , setCookieHttpOnly = True
+                                          }
+            return $ addHeader cookie "Login successful"
       else throwError err401 { errBody = "Access denied" }
 
 sweepTheServer :: MVar SweepState -> SweepConfig -> Server SweepTheAPI
