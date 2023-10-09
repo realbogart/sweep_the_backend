@@ -94,9 +94,7 @@ throwAdminLoginError = throwError $ err301 { errHeaders = [("Location", "admin_l
 isValidJWT :: JWTSettings -> BS.ByteString -> Handler AdminUser
 isValidJWT jwtSettings jwt = do
   verified <- liftIO $ verifyJWT jwtSettings jwt 
-  case verified of
-    Nothing -> throwAdminLoginError
-    Just a -> return a
+  maybe throwAdminLoginError return verified
 
 authHandler :: MVar SweepState -> AuthHandler Request AdminUser
 authHandler state = SA.mkAuthHandler handler
