@@ -177,22 +177,11 @@ instance Accept HTML where
 instance MimeRender HTML RawHtml where
   mimeRender _ html = html.unRaw
 
-type SweepTheAPI =  "getSchedule" :> Get '[JSON] Schedule :<|>
-                    "setSchedule" :> ReqBody '[JSON] Schedule :> Post '[JSON] () :<|>
-                    "setActiveSlot" :> QueryParam "id" Int :> Get '[JSON] () :<|>
-                    "login" :> ReqBody '[JSON] AdminCredentials 
-                            :> Post '[JSON] (Headers '[SH.Header "Set-Cookie" SetCookie] T.Text) :<|>
-                    "admin" :> AuthProtect "cookie-jwt-auth" :> Get '[HTML] RawHtml :<|>
-                    Raw
-
 sweepTheContext :: MVar SweepState -> Context (AuthHandler Request AdminUser ': '[])
 sweepTheContext state = authHandler state :. EmptyContext
 
 testSchedule :: Schedule
 testSchedule = Schedule [Slot "Funky Friday" "10:00" "johan" "https://bild" "https://spotify-link"]
-
-sweepTheAPI :: Proxy SweepTheAPI
-sweepTheAPI = Proxy
 
 type Replacement = (TL.Text, TL.Text)
 
@@ -230,8 +219,8 @@ getSchedule state = do
   sweepState <- liftIO (readMVar state)
   return sweepState.schedule
 
-setSchedule :: MVar SweepState -> Schedule -> Handler ()
-setSchedule state newSchedule = do
+setSchedule :: MVar SweepState -> AdminUser -> Schedule -> Handler ()
+setSchedule state _ newSchedule = do
   newState <- liftIO $ modifyMVar state $ \oldState -> do
       let updatedState = oldState {schedule = newSchedule}
       return (updatedState, updatedState) 
@@ -239,8 +228,8 @@ setSchedule state newSchedule = do
   liftIO $ broadcast (TL.toStrict scheduleMsg) newState
   return ()
 
-setActiveSlot :: MVar SweepState -> Maybe Int -> Handler ()
-setActiveSlot state newActiveSlot = do
+setActiveSlot :: MVar SweepState -> AdminUser -> Maybe Int -> Handler ()
+setActiveSlot state _ newActiveSlot = do
   newState <- liftIO $ modifyMVar state $ \oldState -> do
       let updatedState = oldState {currentActiveSlot = fromMaybe (- 1) newActiveSlot}
       return (updatedState, updatedState) 
@@ -276,6 +265,20 @@ adminHandler :: SweepConfig -> AdminUser -> Handler RawHtml
 adminHandler config _ = do 
   content <- liftIO $ getModifiedHtml config (T.unpack config.path_private ++ "/admin.html")
   return $ RawHtml $ TLE.encodeUtf8 content
+
+type SweepTheAPI =  "getSchedule"   :> Get '[JSON] Schedule :<|>
+                    "setSchedule"   :> AuthProtect "cookie-jwt-auth"
+                                    :> ReqBody '[JSON] Schedule :> Post '[JSON] () :<|>
+                    "setActiveSlot" :> AuthProtect "cookie-jwt-auth" 
+                                    :> QueryParam "id" Int :> Get '[JSON] () :<|>
+                    "login"         :> ReqBody '[JSON] AdminCredentials 
+                                    :> Post '[JSON] (Headers '[SH.Header "Set-Cookie" SetCookie] T.Text) :<|>
+                    "admin"         :> AuthProtect "cookie-jwt-auth" 
+                                    :> Get '[HTML] RawHtml :<|>
+                    Raw
+
+sweepTheAPI :: Proxy SweepTheAPI
+sweepTheAPI = Proxy
 
 sweepTheServer :: MVar SweepState -> SweepConfig -> Server SweepTheAPI
 sweepTheServer state config = getSchedule state :<|> 
